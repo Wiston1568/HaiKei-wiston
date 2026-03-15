@@ -12,8 +12,8 @@ const ejs = require('ejs');
 
 // --- REDIS & SESSION STORE SETUP ---
 const redis = require('redis');
-// For connect-redis v9+, this is the correct way to import
-const RedisStore = require('connect-redis').default; 
+// This pattern handles the different ways connect-redis exports itself
+const RedisStoreModule = require('connect-redis').default || require('connect-redis');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -29,11 +29,16 @@ redisClient.connect()
     .then(() => console.log("✅ Cloud Redis Connected"))
     .catch((err) => console.error("❌ Redis Connection Error:", err));
 
-// Initialize the store
-const redisStore = new RedisStore({
-    client: redisClient,
-    prefix: "haikei:",
-});
+// Initialize the store dynamically based on the version detected
+let redisStore;
+if (typeof RedisStoreModule === 'function') {
+    // Handling for older versions (v8 and below)
+    const LegacyStore = RedisStoreModule(session);
+    redisStore = new LegacyStore({ client: redisClient, prefix: "haikei:" });
+} else {
+    // Handling for modern versions (v9+)
+    redisStore = new RedisStoreModule({ client: redisClient, prefix: "haikei:" });
+}
 
 // --- VIEW ENGINE & STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
@@ -53,7 +58,7 @@ app.use(session({
     secret: process.env.AUTH_SECRET || "tacocat", 
     resave: false,
     saveUninitialized: false,
-    store: redisStore, // Using the initialized redisStore
+    store: redisStore, 
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
