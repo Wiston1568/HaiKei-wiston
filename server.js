@@ -9,11 +9,23 @@ const helmet = require("helmet");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const ejs = require('ejs');
+const redis = require('redis');
 
 // --- REDIS & SESSION STORE SETUP ---
-const redis = require('redis');
-// This pattern handles the different ways connect-redis exports itself
-const RedisStoreModule = require('connect-redis').default || require('connect-redis');
+const ConnectRedis = require('connect-redis');
+
+// Robust Constructor Detection
+let RedisStore;
+if (ConnectRedis.default) {
+    // Modern ESM-style export
+    RedisStore = ConnectRedis.default;
+} else if (typeof ConnectRedis === 'function' && ConnectRedis.name !== 'RedisStore') {
+    // Legacy style (v8 and below)
+    RedisStore = ConnectRedis(session);
+} else {
+    // Standard CommonJS style
+    RedisStore = ConnectRedis;
+}
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -29,16 +41,11 @@ redisClient.connect()
     .then(() => console.log("✅ Cloud Redis Connected"))
     .catch((err) => console.error("❌ Redis Connection Error:", err));
 
-// Initialize the store dynamically based on the version detected
-let redisStore;
-if (typeof RedisStoreModule === 'function') {
-    // Handling for older versions (v8 and below)
-    const LegacyStore = RedisStoreModule(session);
-    redisStore = new LegacyStore({ client: redisClient, prefix: "haikei:" });
-} else {
-    // Handling for modern versions (v9+)
-    redisStore = new RedisStoreModule({ client: redisClient, prefix: "haikei:" });
-}
+// Initialize the store using the detected constructor
+const redisStore = new RedisStore({
+    client: redisClient,
+    prefix: "haikei:",
+});
 
 // --- VIEW ENGINE & STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
