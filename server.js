@@ -19,11 +19,14 @@ const port = process.env.PORT || 3000;
 const ejs = require('ejs')
 
 const httpServer = createServer(app);
+
+// FIX 1: Attach Socket.io to the existing httpServer
 const io = new Server(httpServer, {   
     cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"]
-} });
+        origin: "*", // Changed for production deployment
+        methods: ["GET", "POST"]
+    } 
+});
 
 const roomData = {};
 
@@ -32,6 +35,7 @@ io.on("connection", (socket) => {
   setInterval(() => {
     checkRoomMembers(roomData);
   }, 1000);
+
   function createRoom(roomID) {
     room = roomID
     socket.join(room)
@@ -57,15 +61,16 @@ io.on("connection", (socket) => {
   function joinRoom(roomID) {
     room = roomID
     socket.join(room)
-    roomData[room].users[socket.id] = {
-      ping: -1,
-      id: socket.id,
-      isHost: false,
-    }
-    console.log("send video down to user")
-    if (roomData[room].isVideoCurrentlyPlaying == true) {
-      if (roomData[room].currentManifest == "") return console.log("No manifest to send to user");
-      socket.emit("receiveUserVideoFromHost", {videoData: roomData[room].currentManifest, currentTime: roomData[room].currentTime});
+    if (roomData[room]) {
+        roomData[room].users[socket.id] = {
+            ping: -1,
+            id: socket.id,
+            isHost: false,
+        }
+        if (roomData[room].isVideoCurrentlyPlaying == true) {
+            if (roomData[room].currentManifest == "") return;
+            socket.emit("receiveUserVideoFromHost", {videoData: roomData[room].currentManifest, currentTime: roomData[room].currentTime});
+        }
     }
   }
 
@@ -76,26 +81,21 @@ io.on("connection", (socket) => {
       createRoom(data.roomID)
     }
   })
+
   socket.on('disconnect', () => {
     let idToRemove = socket.id
-    // Update the user information to make sure they are not a host, because it will be recycled to another user and we want to avoid edge cases :)
     if (roomData[room] !== undefined) {
-      roomData[room].users[socket.id] = {
-        ping: -1,
-        id: socket.id,
-        isHost: false,
-      }
-      socket.disconnect()
       delete roomData[room].users[idToRemove]
     }
   });
 
   function checkRoomMembers() {
     if (roomData[room] == undefined) return
-      if (Object.keys(roomData[room].users).length < 1) {
-        delete roomData[room]
-      }
+    if (Object.keys(roomData[room].users).length < 1) {
+      delete roomData[room]
+    }
   }
+
   socket.on("ping", (callback) => {
       callback();
   });
@@ -113,14 +113,15 @@ io.on("connection", (socket) => {
     }
     if (shouldRotateHost) {
       const potentialHostList = Object.keys(roomData[room].users);
-      const newHostId = potentialHostList[Math.floor(Math.random() * potentialHostList.length)];
-      roomData[room].hostID = newHostId;
-      const newHostSocket = io.sockets.sockets.get(newHostId);
-      roomData[room].users[newHostId].isHost = true;
-      newHostSocket.emit("receiveNewHostMessage", {message: "You are now the host!"});
+      if (potentialHostList.length > 0) {
+          const newHostId = potentialHostList[Math.floor(Math.random() * potentialHostList.length)];
+          roomData[room].hostID = newHostId;
+          const newHostSocket = io.sockets.sockets.get(newHostId);
+          roomData[room].users[newHostId].isHost = true;
+          if (newHostSocket) newHostSocket.emit("receiveNewHostMessage", {message: "You are now the host!"});
+      }
     }
   });
-
 
   socket.on("updateRoomName", (data) => {
     if (roomData[room] === undefined) return;
@@ -151,18 +152,10 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("serverGetNewSource", (data) => {
-    if (roomData[room] === undefined) return;
-    if (roomData[room].users[socket.id].isHost == false) return socket.emit("permissionDenied", {message: "You are not the host!"});
-    
-    console.log(data)
-  })
-
   socket.on("playNewVideo", async (data) => {
     if (roomData[room] === undefined) return;
     if (roomData[room].users[socket.id].isHost == false) return socket.emit("permissionDenied", {message: "You are not the host!"});
     if (data.showID == undefined) return socket.emit("permissionDenied", {message: "No video ID provided!"});
-    let videoID = data.showID;
     roomData[room].isVideoCurrentlyPlaying = false;
     if (data.source == "gogoanime") {
       try {
@@ -188,12 +181,6 @@ io.on("connection", (socket) => {
     if (roomData[room] === undefined) return;
     if (roomData[room].users[socket.id].isHost == false) return socket.emit("permissionDenied", {message: "You are not the host!"});
     roomData[room].currentManifest = data.currentManifest;
-    console.log(roomData[room].currentManifest)
-  })
-
-  socket.on("getCurrentTime", (data) => {
-    if (roomData[room] === undefined) return;
-    socket.emit("receiveCurrentTime", {currentTime: roomData[room].currentTime})
   })
 
   socket.on("updateVideoStatus", async (data) => {
@@ -205,7 +192,6 @@ io.on("connection", (socket) => {
     } else {
       io.in(data.roomID).emit("receiveVideoStatus", {status: "pause"})
     }
-    console.log(roomData[room].playing)
   })
   
   socket.on("updateCurrentTime", (data) => {
@@ -214,24 +200,9 @@ io.on("connection", (socket) => {
     roomData[room].currentTime = data.currentTime;
     io.in(data.roomID).emit("receiveCurrentTime", {currentTime: roomData[room].currentTime})
   });
-  
-  socket.on("amIHost", (data) => {
-    if (roomData[room] === undefined) return;
-    if (roomData[room].users[socket.id].isHost == false) return socket.emit("permissionDenied", {message: "You are not the host!"});
-    socket.emit("receiveHostStatus", {isHost: true})
-  });
-
-  socket.on("getVideoPlayState", (data) => {
-    if (roomData[room] === undefined) return;
-    if (roomData[room].playing == undefined) return socket.emit("permissionDenied", {message: "An error occured while trying to obtain video info!"})
-    socket.emit("receiveVideoPlayState", {isVideoCurrentlyPlaying: roomData[room].playing})
-  })
 });
 
-
-
-
-io.listen(8000);
+// REMOVED: io.listen(8000) - This causes Vercel crashes.
 
 app.locals.pluralize = require('pluralize');
 
@@ -241,34 +212,27 @@ app.use(helmet({
     originAgentCluster: false,
     frameguard: false,
 }))
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// FIX 2: SQLite Storage Path
+// Vercel is read-only except for /tmp.
 app.use(session({
   name : '.HKSECURITY',
-  secret: process.env.AUTH_SECRET || "tacocat", // absolutely set a AUTH_SECRET for production...
-  resave: false, // don't save session if unmodified
-  saveUninitialized: false, // don't create session until something stored
-  store: new SQLiteStore({ db: 'sessions.db', dir: './var/db' })
+  secret: process.env.AUTH_SECRET || "tacocat",
+  resave: false,
+  saveUninitialized: false,
+  store: new SQLiteStore({ db: 'sessions.db', dir: '/tmp' }) 
 }));
+
 app.use(flash());
 app.use(limit({max: 10, period: 5 * 1000, message: "Request Limit Exceeded!" }), passport.authenticate('session'));
 
-app.use(express.static('public'))
 app.engine('ejs', ejs.renderFile);
-
-app.set('views', 'public')
-app.listen(port);
-
-function getRoomData() {
-  return roomData;
-}
-
-module.exports = {
-  getRoomData
-};
-
+app.set('views', path.join(__dirname, 'public'));
 
 // Set up app routes
 app.use('/', require('./routers/index.js'));
@@ -284,3 +248,14 @@ app.use('/genres', require('./routers/genre/genres.js'));
 app.use('/genre/', require('./routers/genre/genre.js'));
 app.use("/status", require("./routers/status/status.js"));
 app.use('/watch', require("./routers/watch/watch.js"));
+
+// FIX 3: Use httpServer.listen instead of app.listen
+httpServer.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+});
+
+function getRoomData() {
+  return roomData;
+}
+
+module.exports = { getRoomData };
