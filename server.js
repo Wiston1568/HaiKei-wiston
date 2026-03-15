@@ -10,16 +10,17 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const ejs = require('ejs');
 
-// Redis & Session Store
+// --- REDIS & SESSION STORE SETUP ---
 const redis = require('redis');
-const RedisStore = require('connect-redis').default;
+// For connect-redis v9+, this is the correct way to import
+const RedisStore = require('connect-redis').default; 
 
 const app = express();
 const port = process.env.PORT || 3000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// --- REDIS SETUP ---
+// --- REDIS CLIENT CONNECTION ---
 const redisClient = redis.createClient({
     url: process.env.REDIS_URL
 });
@@ -28,6 +29,7 @@ redisClient.connect()
     .then(() => console.log("✅ Cloud Redis Connected"))
     .catch((err) => console.error("❌ Redis Connection Error:", err));
 
+// Initialize the store
 const redisStore = new RedisStore({
     client: redisClient,
     prefix: "haikei:",
@@ -45,13 +47,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, frameguard: false }));
 
-// --- SESSION STORAGE (Using Cloud Redis) ---
+// --- SESSION STORAGE ---
 app.use(session({
     name : '.HKSECURITY',
     secret: process.env.AUTH_SECRET || "tacocat", 
     resave: false,
     saveUninitialized: false,
-    store: redisStore,
+    store: redisStore, // Using the initialized redisStore
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
