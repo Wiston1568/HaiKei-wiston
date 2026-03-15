@@ -28,7 +28,6 @@ const io = new Server(httpServer, {
 
 const roomData = {};
 
-// Socket logic remains the same...
 io.on("connection", (socket) => {
     let room;
     setInterval(() => { if (roomData[room]) checkRoomMembers(roomData); }, 1000);
@@ -55,7 +54,6 @@ io.on("connection", (socket) => {
     socket.on('disconnect', () => { if (roomData[room]) delete roomData[room].users[socket.id]; });
     function checkRoomMembers() { if (roomData[room] && Object.keys(roomData[room].users).length < 1) delete roomData[room]; }
     socket.on("ping", (cb) => cb());
-    // ... (rest of your socket listeners)
 });
 
 app.locals.pluralize = require('pluralize');
@@ -63,14 +61,16 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false,
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// Static files (CSS, JS, Images) from the public folder
 app.use(express.static(path.join(__dirname, 'public')));
 
-// FIX: Safer Session Handling for Vercel
+// FIX: Improved Session Handling for Vercel
 let sessionStore;
 try {
+    // Vercel is read-only, we use /tmp for the temporary database file
     sessionStore = new SQLiteStore({ db: 'sessions.db', dir: '/tmp' });
 } catch (e) {
-    console.log("SQLite Store failed, using memory store");
     sessionStore = null; 
 }
 
@@ -79,16 +79,16 @@ app.use(session({
     secret: process.env.AUTH_SECRET || "tacocat",
     resave: false,
     saveUninitialized: false,
-    store: sessionStore || undefined // Fallback to memory if SQLite fails
+    store: sessionStore || undefined 
 }));
 
 app.use(flash());
 app.use(limit({max: 10, period: 5 * 1000, message: "Limit Exceeded!" }), passport.authenticate('session'));
 
-app.engine('ejs', ejs.renderFile);
+// FIX: Pointing EJS to the folder where your templates actually are
 app.set('view engine', 'ejs');
-// Point to the root of the project where your EJS files actually are
 app.set('views', path.join(__dirname, 'public')); 
+app.engine('ejs', ejs.renderFile);
 
 // Set up app routes
 app.use('/', require('./routers/index.js'));
@@ -105,6 +105,7 @@ app.use('/genre/', require('./routers/genre/genre.js'));
 app.use("/status", require("./routers/status/status.js"));
 app.use('/watch', require("./routers/watch/watch.js"));
 
+// Using httpServer to allow Socket.io and Express to share the same port
 httpServer.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
