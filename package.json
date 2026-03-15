@@ -19,6 +19,7 @@
     "chalk": "^4.1.2",
     "config": "^3.3.8",
     "connect-flash": "^0.1.1",
+    "connect-redis": "^9.0.0",
     "connect-sqlite3": "^0.9.16",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -43,7 +44,7 @@
     "passport": "^0.6.0",
     "passport-local": "^1.0.0",
     "pluralize": "^8.0.0",
-    "redis": "^4.6.2",
+    "redis": "^4.7.1",
     "response-time": "^2.3.2",
     "socket.io": "^4.8.3",
     "uuid": "^9.0.0"

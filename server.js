@@ -6,15 +6,32 @@ const session = require('express-session');
 const flash = require('connect-flash');
 const passport = require('passport');
 const helmet = require("helmet");
-const SQLiteStore = require('connect-sqlite3')(session);
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const ejs = require('ejs');
+
+// Redis & Session Store
+const redis = require('redis');
+const RedisStore = require('connect-redis').default;
 
 const app = express();
 const port = process.env.PORT || 3000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*", methods: ["GET", "POST"] } });
+
+// --- REDIS SETUP ---
+const redisClient = redis.createClient({
+    url: process.env.REDIS_URL
+});
+
+redisClient.connect()
+    .then(() => console.log("✅ Cloud Redis Connected"))
+    .catch((err) => console.error("❌ Redis Connection Error:", err));
+
+const redisStore = new RedisStore({
+    client: redisClient,
+    prefix: "haikei:",
+});
 
 // --- VIEW ENGINE & STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
@@ -28,32 +45,24 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, frameguard: false }));
 
-// --- SESSION STORAGE (Vercel Read-Only Fix) ---
-let sessionStore;
-try {
-    // Vercel requires writing to /tmp for persistent files during a session
-    sessionStore = new SQLiteStore({ 
-        db: 'sessions.db', 
-        dir: '/tmp' 
-    });
-} catch (e) {
-    console.log("SQLite Session Store failed, using MemoryStore");
-    sessionStore = null; 
-}
-
+// --- SESSION STORAGE (Using Cloud Redis) ---
 app.use(session({
     name : '.HKSECURITY',
     secret: process.env.AUTH_SECRET || "tacocat", 
     resave: false,
     saveUninitialized: false,
-    store: sessionStore || undefined 
+    store: redisStore,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 // 1 day session
+    }
 }));
 
 app.use(flash());
 app.use(passport.authenticate('session'));
 
 // --- ROUTES ---
-// IMPORTANT: Ensure these folder names match your GitHub (lowercase vs uppercase)
 app.use('/', require('./routers/index.js'));
 app.use('/', require('./routers/auth.js'));
 app.use('/w2g', require('./routers/w2g.js'));
@@ -74,10 +83,8 @@ io.on("connection", (socket) => {
     });
 });
 
-// --- EXPORT FOR VERCEL ---
 if (process.env.NODE_ENV !== 'production') {
     httpServer.listen(port, () => console.log(`Dev server on ${port}`));
 }
 
-// Exporting the app allows Vercel to handle the serverless execution
 module.exports = app;
