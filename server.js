@@ -9,31 +9,32 @@ const helmet = require("helmet");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const ejs = require('ejs');
-const redis = require('redis');
+const { createClient } = require('redis');
 
-// --- REDIS & SESSION STORE SETUP ---
+// --- REDIS STORE ---
 const ConnectRedis = require('connect-redis');
-
-// Robust Constructor Detection
-let RedisStore;
-if (ConnectRedis.default) {
-    // Modern ESM-style export
-    RedisStore = ConnectRedis.default;
-} else if (typeof ConnectRedis === 'function' && ConnectRedis.name !== 'RedisStore') {
-    // Legacy style (v8 and below)
-    RedisStore = ConnectRedis(session);
-} else {
-    // Standard CommonJS style
-    RedisStore = ConnectRedis;
-}
+const RedisStore = ConnectRedis.default || ConnectRedis;
 
 const app = express();
+// Render uses the PORT env var automatically
 const port = process.env.PORT || 3000;
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// --- REDIS CLIENT CONNECTION ---
-const redisClient = redis.createClient({
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
+// --- PING ROUTE (The "Keep-Alive" Target) ---
+// This simple route gives cron-job.org something to hit
+app.get('/ping', (req, res) => {
+    res.status(200).send('System Awake');
+});
+
+// --- REDIS CLIENT ---
+const redisClient = createClient({
     url: process.env.REDIS_URL
 });
 
@@ -41,35 +42,33 @@ redisClient.connect()
     .then(() => console.log("✅ Cloud Redis Connected"))
     .catch((err) => console.error("❌ Redis Connection Error:", err));
 
-// Initialize the store using the detected constructor
 const redisStore = new RedisStore({
     client: redisClient,
-    prefix: "haikei:",
+    prefix: "haikei:"
 });
 
-// --- VIEW ENGINE & STATIC FILES ---
+// --- VIEW ENGINE & MIDDLEWARE ---
 app.use(express.static(path.join(__dirname, 'public')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'public'));
 app.engine('ejs', ejs.renderFile);
 
-// --- MIDDLEWARE ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, frameguard: false }));
 
-// --- SESSION STORAGE ---
+// --- SESSION ---
 app.use(session({
-    name : '.HKSECURITY',
-    secret: process.env.AUTH_SECRET || "tacocat", 
+    name: ".HKSECURITY",
+    secret: process.env.AUTH_SECRET || "tacocat",
     resave: false,
     saveUninitialized: false,
-    store: redisStore, 
+    store: redisStore,
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: process.env.NODE_ENV === "production",
         httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 // 1 day session
+        maxAge: 1000 * 60 * 60 * 24
     }
 }));
 
@@ -84,7 +83,7 @@ app.use('/api', require('./routers/api.js'));
 app.use('/watchlist', require('./routers/watchlist.js'));
 app.use('/search', require('./routers/search.js'));
 app.use('/trending', require('./routers/trending.js'));
-app.use('/watch', require("./routers/watch/watch.js"));
+app.use('/watch', require('./routers/watch/watch.js'));
 
 // --- SOCKET.IO ---
 const roomData = {};
@@ -97,8 +96,10 @@ io.on("connection", (socket) => {
     });
 });
 
-if (process.env.NODE_ENV !== 'production') {
-    httpServer.listen(port, () => console.log(`Dev server on ${port}`));
-}
+// --- START SERVER ---
+// On Render, listening on 0.0.0.0 is best practice for host binding
+httpServer.listen(port, "0.0.0.0", () => {
+    console.log(`🚀 App live at http://0.0.0.0:${port}`);
+});
 
 module.exports = app;
